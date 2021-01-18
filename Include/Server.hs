@@ -18,6 +18,10 @@ import Control.Exception ( throw, catch, evaluate )
 import Data.IORef ( modifyIORef, newIORef, readIORef )
 import Data.List ( sortBy )
 
+import Control.Concurrent
+import Control.Monad
+import System.Cron
+import Data.Time.Clock
 import Network.Wai
     ( 
     responseLBS,
@@ -84,7 +88,15 @@ srvDownload config label = catch (do
         return . genConfigJson . (!! index) $ links) (\(Error s) -> return . fromString $ s) where
             index = (read . B8.unpack :: B.ByteString -> Int) $ label =~ ("(?<=^/download/)[0-9]*(?=/?$)" :: String)
 
+scheduleRefresh :: PerConf -> IO ()
+scheduleRefresh config = forever $ catch (do
+    now <- getCurrentTime
+    when (scheduleMatches daily now) . void $ srvRefresh config
+    putStrLn "sleeping"
+    threadDelay 100000) (\(Error s) -> putStrLn $ "Error in scheduly subscribing due to " ++ s)
+
 runserver :: HostPreference -> Port -> IO ()
 runserver h p = do
     confData <- newIORef $ Persistent Nothing Nothing
+    forkIO $ scheduleRefresh confData
     runSettings (setHost h . setPort p $ defaultSettings) $ subscribeApp confData
